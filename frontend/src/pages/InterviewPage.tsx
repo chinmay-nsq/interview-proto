@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import { useParams, useNavigate } from "react-router-dom";
-import { motion, AnimatePresence, useSpring, useTransform } from "motion/react";
+import { motion, AnimatePresence, useSpring, useTransform, Reorder } from "motion/react";
 import { toast } from "sonner";
+import { Video, MessageSquare, Check, CameraOff } from "lucide-react";
 import { api } from "@/lib/api";
 import { startSttSession, type SttSession } from "@/lib/deepgramStt";
 import { startBrowserSttSession } from "@/lib/browserStt";
@@ -15,6 +16,8 @@ import { Button } from "@/components/ui/button";
 
 type Phase = "idle" | "asking" | "listening" | "processing" | "done";
 type Engine = "deepgram" | "browser";
+type LayoutMode = "call" | "chat";
+type TileId = "ai" | "camera";
 
 interface ChatMessage {
   role: "interviewer" | "candidate";
@@ -22,7 +25,7 @@ interface ChatMessage {
   isReaction?: boolean;
 }
 
-/* ── Waveform bars shown while AI is speaking ──────────────────────────── */
+/* ── Waveform bars shown while AI is speaking (compact, in the transcript) ── */
 function SpeakingWave() {
   const bars = [0.4, 0.9, 0.6, 1, 0.7, 0.85, 0.5];
   return (
@@ -45,7 +48,7 @@ function SpeakingWave() {
   );
 }
 
-/* ── Ripple rings shown on the Done button while listening ─────────────── */
+/* ── Ripple rings shown behind the Done control while listening ────────── */
 function MicRipple() {
   return (
     <span className="absolute inset-0 rounded-full pointer-events-none">
@@ -62,8 +65,89 @@ function MicRipple() {
   );
 }
 
+/* ── AI "presence" tile — deliberately no character/photo. Just an abstract ─
+   gradient orb that breathes/pulses while the AI is speaking, so the left
+   side of the call reads as "someone is there and talking" without any
+   illustrated avatar. ────────────────────────────────────────────────────── */
+function AiPresenceTile({ phase }: { phase: Phase }) {
+  const isAsking = phase === "asking";
+  const isListening = phase === "listening";
+  return (
+    <div className="relative flex-1 min-w-0 rounded-3xl border border-border bg-card overflow-hidden flex items-center justify-center">
+      <div className="absolute inset-0 bg-linear-to-br from-primary/6 via-transparent to-transparent" />
+
+      <AnimatePresence>
+        {isAsking &&
+          [0, 0.5, 1].map((delay) => (
+            <motion.span
+              key={delay}
+              className="absolute rounded-full border border-primary/25"
+              style={{ width: 160, height: 160 }}
+              initial={{ scale: 0.8, opacity: 0.55 }}
+              animate={{ scale: 2, opacity: 0 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 2.4, delay, repeat: Infinity, ease: "easeOut" }}
+            />
+          ))}
+      </AnimatePresence>
+
+      <motion.div
+        className="relative size-36 sm:size-44 rounded-full"
+        style={{ background: "linear-gradient(135deg, var(--gradient-from), var(--gradient-to))" }}
+        animate={
+          isAsking
+            ? { scale: [1, 1.07, 1], opacity: 1 }
+            : { scale: 1, opacity: isListening ? 0.55 : 0.8 }
+        }
+        transition={{ duration: 1.7, repeat: isAsking ? Infinity : 0, ease: "easeInOut" }}
+      />
+
+      <div className="absolute bottom-5 left-5 flex items-center gap-2">
+        <PhaseDot phase={phase} tone="on-tile" />
+        <span className="text-sm font-medium text-foreground/80">Interviewer</span>
+      </div>
+    </div>
+  );
+}
+
+/* ── Candidate's own camera — live local preview only. The stream is never
+   recorded, saved, or sent anywhere; it's bound straight to a <video> element
+   client-side and torn down (tracks stopped) when the interview ends. ────── */
+function CameraTile({
+  videoRef,
+  hasVideo,
+}: {
+  videoRef: React.RefObject<HTMLVideoElement | null>;
+  hasVideo: boolean;
+}) {
+  return (
+    <div className="relative flex-1 min-w-0 rounded-3xl border border-border bg-muted overflow-hidden flex items-center justify-center">
+      {hasVideo ? (
+        <video
+          ref={videoRef}
+          autoPlay
+          muted
+          playsInline
+          className="absolute inset-0 w-full h-full object-cover scale-x-[-1]"
+        />
+      ) : (
+        <div className="flex flex-col items-center gap-2 text-muted-foreground">
+          <CameraOff className="size-8" strokeWidth={1.5} />
+          <span className="text-sm">Camera unavailable</span>
+        </div>
+      )}
+      <div className="absolute inset-x-0 bottom-0 h-16 bg-linear-to-t from-black/45 to-transparent pointer-events-none" />
+      <span className="absolute bottom-5 left-5 text-sm font-medium text-white [text-shadow:0_1px_3px_rgba(0,0,0,0.5)]">
+        You
+      </span>
+    </div>
+  );
+}
+
 /* ── Animated dot that signals a phase ─────────────────────────────────── */
-function PhaseDot({ phase }: { phase: Phase }) {
+function PhaseDot({ phase, tone = "default" }: { phase: Phase; tone?: "default" | "on-tile" }) {
+  const idleClass = tone === "on-tile" ? "border-foreground/25 border-t-foreground/70" : "border-muted-foreground/20 border-t-muted-foreground";
+  const barClass = tone === "on-tile" ? "bg-foreground/70" : "bg-muted-foreground";
   return (
     <AnimatePresence mode="wait">
       {phase === "listening" && (
@@ -79,7 +163,7 @@ function PhaseDot({ phase }: { phase: Phase }) {
       {phase === "processing" && (
         <motion.span
           key="processing"
-          className="size-3.5 rounded-full border-[1.5px] border-muted-foreground/20 border-t-muted-foreground"
+          className={`size-3.5 rounded-full border-[1.5px] ${idleClass}`}
           initial={{ opacity: 0 }}
           animate={{ opacity: 1, rotate: 360 }}
           exit={{ opacity: 0 }}
@@ -97,7 +181,7 @@ function PhaseDot({ phase }: { phase: Phase }) {
           {[0, 1, 2].map((i) => (
             <motion.span
               key={i}
-              className="w-0.5 rounded-full bg-muted-foreground"
+              className={`w-0.5 rounded-full ${barClass}`}
               animate={{ height: ["4px", "10px", "4px"] }}
               transition={{ duration: 0.7, delay: i * 0.15, repeat: Infinity, ease: "easeInOut" }}
             />
@@ -126,6 +210,137 @@ function LiveCaptionText({ text }: { text: string }) {
   );
 }
 
+/* ── Shared transcript content (message bubbles + speaking/processing rows) ─
+   Both layouts (call/chat) render this inside their own scroll container. ── */
+function TranscriptMessages({
+  messages,
+  isAsking,
+  isProcessing,
+}: {
+  messages: ChatMessage[];
+  isAsking: boolean;
+  isProcessing: boolean;
+}) {
+  return (
+    <>
+      <AnimatePresence initial={false}>
+        {messages.map((msg, i) => (
+          <motion.div
+            key={i}
+            layout
+            initial={{ opacity: 0, y: 16, scale: 0.97 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            transition={{ type: "spring", stiffness: 380, damping: 32, mass: 0.8 }}
+            className={`flex ${msg.role === "candidate" ? "justify-end" : "justify-start"}`}
+          >
+            {msg.role === "interviewer" && !msg.isReaction && (
+              <div className="flex gap-2.5 max-w-[90%]">
+                <motion.div
+                  className="size-7 rounded-full bg-primary shrink-0 flex items-center justify-center mt-0.5"
+                  initial={{ scale: 0, rotate: -20 }}
+                  animate={{ scale: 1, rotate: 0 }}
+                  transition={{ type: "spring", stiffness: 500, damping: 28, delay: 0.05 }}
+                >
+                  <span className="text-[10px] font-semibold text-primary-foreground leading-none">AI</span>
+                </motion.div>
+                <div>
+                  <p className="text-[11px] text-muted-foreground mb-1 font-medium tracking-wide">Interviewer</p>
+                  <div className="bg-muted rounded-2xl rounded-tl-sm px-4 py-3 text-sm leading-relaxed text-foreground">
+                    {msg.text}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {msg.isReaction && (
+              <div className="flex gap-2.5 max-w-[90%]">
+                <div className="size-7 rounded-full bg-primary shrink-0 flex items-center justify-center mt-0.5">
+                  <span className="text-[10px] font-semibold text-primary-foreground leading-none">AI</span>
+                </div>
+                <div className="rounded-2xl rounded-tl-sm border border-border px-4 py-2.5 text-sm leading-relaxed text-muted-foreground italic">
+                  {msg.text}
+                </div>
+              </div>
+            )}
+
+            {msg.role === "candidate" && (
+              <div className="max-w-[90%]">
+                <p className="text-[11px] text-muted-foreground mb-1 font-medium tracking-wide text-right">You</p>
+                <div className="bg-primary text-primary-foreground rounded-2xl rounded-tr-sm px-4 py-3 text-sm leading-relaxed">
+                  {msg.text}
+                </div>
+              </div>
+            )}
+          </motion.div>
+        ))}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {isAsking && (
+          <motion.div
+            key="speaking"
+            className="flex gap-2.5"
+            initial={{ opacity: 0, y: 10, scale: 0.95 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, scale: 0.95 }}
+            transition={{ type: "spring", stiffness: 400, damping: 30 }}
+          >
+            <div className="size-7 rounded-full bg-primary shrink-0 flex items-center justify-center">
+              <span className="text-[10px] font-semibold text-primary-foreground leading-none">AI</span>
+            </div>
+            <div className="bg-muted rounded-2xl rounded-tl-sm px-4 py-3 flex items-center">
+              <SpeakingWave />
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {isProcessing && (
+          <motion.div
+            key="processing"
+            className="flex gap-2.5"
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.2 }}
+          >
+            <div className="size-7 rounded-full bg-foreground/10 border border-border shrink-0 flex items-center justify-center">
+              <motion.span
+                className="size-3.5 rounded-full border-[1.5px] border-muted-foreground/30 border-t-muted-foreground"
+                animate={{ rotate: 360 }}
+                transition={{ duration: 0.8, repeat: Infinity, ease: "linear" }}
+              />
+            </div>
+            <div className="bg-muted/50 rounded-2xl rounded-tl-sm px-4 py-3 flex items-center">
+              <span className="text-sm text-muted-foreground">Thinking…</span>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </>
+  );
+}
+
+/* ── Done control — a compact icon button, not a big centered stack. Two
+   placements depending on layout: floating over the call stage, or inline
+   at the end of the caption row in chat mode. ──────────────────────────── */
+function DoneButton({ onDone, size = 44 }: { onDone: () => void; size?: number }) {
+  return (
+    <div className="relative shrink-0" style={{ width: size, height: size }}>
+      <MicRipple />
+      <Button
+        onClick={onDone}
+        size="icon"
+        className="relative rounded-full size-full"
+        aria-label="Done — submit answer now"
+      >
+        <Check className="size-4.5" strokeWidth={2.5} />
+      </Button>
+    </div>
+  );
+}
+
 export default function InterviewPage() {
   const { interviewId } = useParams<{ interviewId: string }>();
   const navigate = useNavigate();
@@ -134,9 +349,13 @@ export default function InterviewPage() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [liveCaption, setLiveCaption] = useState("");
   const [engine, setEngine] = useState<Engine>("deepgram");
+  const [hasVideo, setHasVideo] = useState(false);
+  const [layoutMode, setLayoutMode] = useState<LayoutMode>("call");
+  const [tileOrder, setTileOrder] = useState<TileId[]>(["ai", "camera"]);
 
   const engineRef = useRef<Engine>("deepgram");
   const micStreamRef = useRef<MediaStream | null>(null);
+  const videoRef = useRef<HTMLVideoElement>(null);
   const ttsPlayerRef = useRef<TtsPlayer | null>(null);
   const sttSessionRef = useRef<SttSession | null>(null);
   const turnVadRef = useRef<TurnVadSession | null>(null);
@@ -155,6 +374,15 @@ export default function InterviewPage() {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
   }, [messages, liveCaption]);
+
+  // Runs after the <video> element actually mounts (it's conditionally
+  // rendered on hasVideo), which is why this can't just happen inline where
+  // hasVideo gets set — the ref would still be null at that point.
+  useEffect(() => {
+    if (hasVideo && videoRef.current && micStreamRef.current) {
+      videoRef.current.srcObject = micStreamRef.current;
+    }
+  }, [hasVideo]);
 
   const stopStt = useCallback(() => {
     sttSessionRef.current?.stop();
@@ -314,14 +542,31 @@ export default function InterviewPage() {
     let cancelled = false;
 
     async function init() {
+      // Camera is best-effort: ask for mic + camera together, but if the
+      // candidate has no webcam or denies it, fall back to audio-only rather
+      // than blocking the interview — the camera tile just shows "unavailable".
+      let stream: MediaStream;
       try {
-        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        if (cancelled) { stream.getTracks().forEach((t) => t.stop()); return; }
-        micStreamRef.current = stream;
+        stream = await navigator.mediaDevices.getUserMedia({
+          audio: true,
+          video: { facingMode: "user" },
+        });
       } catch {
-        toast.error("Microphone access denied.");
-        return;
+        try {
+          stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        } catch {
+          toast.error("Microphone access denied.");
+          return;
+        }
       }
+      if (cancelled) { stream.getTracks().forEach((t) => t.stop()); return; }
+      micStreamRef.current = stream;
+      // Local preview only — this stream is never recorded, saved, or sent to
+      // any API; it's just bound to the <video> element for the candidate's
+      // own eyes. Actually attaching it happens in the effect below, once the
+      // <video> element has mounted (it's conditionally rendered on hasVideo,
+      // so the ref isn't populated yet on this very line).
+      setHasVideo(stream.getVideoTracks().length > 0);
 
       // Created once (model load is expensive) and started/paused per-turn via
       // enterListening/pauseTurnVad rather than recreated each turn. Reuses the
@@ -386,16 +631,44 @@ export default function InterviewPage() {
     done: "Complete",
   }[phase];
 
+  const doneScreen = (
+    <motion.div
+      key="done-screen"
+      initial={{ opacity: 0, scale: 0.95, y: 12 }}
+      animate={{ opacity: 1, scale: 1, y: 0 }}
+      transition={{ type: "spring", stiffness: 300, damping: 28 }}
+      className="rounded-2xl border border-border bg-card card-shadow p-6 text-center flex flex-col items-center gap-4"
+    >
+      <motion.div
+        className="size-12 rounded-full bg-muted flex items-center justify-center"
+        initial={{ scale: 0, rotate: -30 }}
+        animate={{ scale: 1, rotate: 0 }}
+        transition={{ type: "spring", stiffness: 400, damping: 22, delay: 0.1 }}
+      >
+        <Check className="size-5 text-foreground" strokeWidth={2.5} />
+      </motion.div>
+      <motion.div initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.2 }}>
+        <p className="text-base font-semibold text-foreground">Interview complete</p>
+        <p className="text-sm text-muted-foreground mt-1">You answered all the questions. Great practice!</p>
+      </motion.div>
+      <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.35 }}>
+        <Button onClick={() => navigate("/")} className="h-9 px-6 rounded-full text-sm">
+          Back to roles
+        </Button>
+      </motion.div>
+    </motion.div>
+  );
+
   return (
-    <div className="min-h-screen bg-background flex flex-col">
+    <div className="h-screen w-full bg-background flex flex-col overflow-hidden">
 
       {/* Nav */}
-      <nav className="border-b border-border bg-background/90 backdrop-blur-xl sticky top-0 z-10">
-        <div className="max-w-3xl mx-auto px-6 h-14 flex items-center justify-between">
+      <nav className="border-b border-border bg-background/90 backdrop-blur-xl z-10 shrink-0">
+        <div className="px-4 sm:px-6 h-14 flex items-center justify-between gap-3">
           {/* Back */}
           <button
             onClick={() => navigate("/")}
-            className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors duration-150"
+            className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors duration-150 shrink-0"
           >
             <svg viewBox="0 0 16 16" className="size-3.5" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
               <path d="M10.5 2 4.5 8l6 6" />
@@ -404,10 +677,7 @@ export default function InterviewPage() {
           </button>
 
           {/* Phase pill */}
-          <motion.div
-            className="flex items-center gap-2 px-3 h-7 rounded-full bg-muted"
-            layout
-          >
+          <motion.div className="flex items-center gap-2 px-3 h-7 rounded-full bg-muted shrink-0" layout>
             <PhaseDot phase={phase} />
             <AnimatePresence mode="wait">
               <motion.span
@@ -423,239 +693,178 @@ export default function InterviewPage() {
             </AnimatePresence>
           </motion.div>
 
-          {/* Engine toggle */}
-          <div className="flex items-center rounded-full border border-border bg-muted p-0.5 gap-0.5">
-            {(["deepgram", "browser"] as Engine[]).map((e) => (
+          <div className="flex items-center gap-2 shrink-0">
+            {/* Layout toggle */}
+            <div className="flex items-center rounded-full border border-border bg-muted p-0.5 gap-0.5">
               <button
-                key={e}
-                onClick={() => handleEngineToggle(e)}
-                className={`px-3 h-6 rounded-full text-[11px] font-medium transition-all duration-200 capitalize ${
-                  engine === e
+                onClick={() => setLayoutMode("call")}
+                aria-label="Call view"
+                title="Call view"
+                className={`size-6 flex items-center justify-center rounded-full transition-all duration-200 ${
+                  layoutMode === "call"
                     ? "bg-background text-foreground shadow-sm"
                     : "text-muted-foreground hover:text-foreground"
                 }`}
               >
-                {e === "browser" ? "Built-in" : "Cloud"}
+                <Video className="size-3.5" strokeWidth={2} />
               </button>
-            ))}
+              <button
+                onClick={() => setLayoutMode("chat")}
+                aria-label="Chat view"
+                title="Chat view"
+                className={`size-6 flex items-center justify-center rounded-full transition-all duration-200 ${
+                  layoutMode === "chat"
+                    ? "bg-background text-foreground shadow-sm"
+                    : "text-muted-foreground hover:text-foreground"
+                }`}
+              >
+                <MessageSquare className="size-3.5" strokeWidth={2} />
+              </button>
+            </div>
+
+            {/* Engine toggle */}
+            <div className="flex items-center rounded-full border border-border bg-muted p-0.5 gap-0.5">
+              {(["deepgram", "browser"] as Engine[]).map((e) => (
+                <button
+                  key={e}
+                  onClick={() => handleEngineToggle(e)}
+                  className={`px-3 h-6 rounded-full text-[11px] font-medium transition-all duration-200 capitalize ${
+                    engine === e
+                      ? "bg-background text-foreground shadow-sm"
+                      : "text-muted-foreground hover:text-foreground"
+                  }`}
+                >
+                  {e === "browser" ? "Built-in" : "Cloud"}
+                </button>
+              ))}
+            </div>
           </div>
         </div>
       </nav>
 
-      {/* Main */}
-      <div className="flex-1 max-w-3xl w-full mx-auto px-6 pt-6 pb-8 flex flex-col gap-4">
+      {layoutMode === "call" ? (
+        /* ══ Call layout: presence + camera tiles, transcript sidebar ══ */
+        <div className="flex-1 min-h-0 flex flex-col lg:flex-row gap-4 p-4">
 
-        {/* ── Message list ── */}
-        <div
-          ref={scrollRef}
-          className="flex-1 overflow-y-auto flex flex-col gap-3 pb-1 scrollbar-none chat-fade-mask"
-          style={{ maxHeight: "calc(100vh - 300px)" }}
-        >
-          <AnimatePresence initial={false}>
-            {messages.map((msg, i) => (
-              <motion.div
-                key={i}
-                layout
-                initial={{ opacity: 0, y: 16, scale: 0.97 }}
-                animate={{ opacity: 1, y: 0, scale: 1 }}
-                transition={{
-                  type: "spring",
-                  stiffness: 380,
-                  damping: 32,
-                  mass: 0.8,
-                }}
-                className={`flex ${msg.role === "candidate" ? "justify-end" : "justify-start"}`}
-              >
-                {/* Interviewer question */}
-                {msg.role === "interviewer" && !msg.isReaction && (
-                  <div className="flex gap-2.5 max-w-[80%]">
-                    <motion.div
-                      className="size-7 rounded-full bg-primary shrink-0 flex items-center justify-center mt-0.5"
-                      initial={{ scale: 0, rotate: -20 }}
-                      animate={{ scale: 1, rotate: 0 }}
-                      transition={{ type: "spring", stiffness: 500, damping: 28, delay: 0.05 }}
-                    >
-                      <span className="text-[10px] font-semibold text-primary-foreground leading-none">AI</span>
-                    </motion.div>
-                    <div>
-                      <p className="text-[11px] text-muted-foreground mb-1 font-medium tracking-wide">Interviewer</p>
-                      <div className="bg-muted rounded-2xl rounded-tl-sm px-4 py-3 text-sm leading-relaxed text-foreground">
-                        {msg.text}
-                      </div>
-                    </div>
-                  </div>
-                )}
-
-                {/* Reaction */}
-                {msg.isReaction && (
-                  <div className="flex gap-2.5 max-w-[80%]">
-                    <div className="size-7 rounded-full bg-primary shrink-0 flex items-center justify-center mt-0.5">
-                      <span className="text-[10px] font-semibold text-primary-foreground leading-none">AI</span>
-                    </div>
-                    <div className="rounded-2xl rounded-tl-sm border border-border px-4 py-2.5 text-sm leading-relaxed text-muted-foreground italic">
-                      {msg.text}
-                    </div>
-                  </div>
-                )}
-
-                {/* Candidate */}
-                {msg.role === "candidate" && (
-                  <div className="max-w-[80%]">
-                    <p className="text-[11px] text-muted-foreground mb-1 font-medium tracking-wide text-right">You</p>
-                    <div className="bg-primary text-primary-foreground rounded-2xl rounded-tr-sm px-4 py-3 text-sm leading-relaxed">
-                      {msg.text}
-                    </div>
-                  </div>
-                )}
-              </motion.div>
-            ))}
-          </AnimatePresence>
-
-          {/* AI speaking typing indicator */}
-          <AnimatePresence>
-            {isAsking && (
-              <motion.div
-                key="speaking"
-                className="flex gap-2.5"
-                initial={{ opacity: 0, y: 10, scale: 0.95 }}
-                animate={{ opacity: 1, y: 0, scale: 1 }}
-                exit={{ opacity: 0, scale: 0.95 }}
-                transition={{ type: "spring", stiffness: 400, damping: 30 }}
-              >
-                <div className="size-7 rounded-full bg-primary shrink-0 flex items-center justify-center">
-                  <span className="text-[10px] font-semibold text-primary-foreground leading-none">AI</span>
-                </div>
-                <div className="bg-muted rounded-2xl rounded-tl-sm px-4 py-3 flex items-center">
-                  <SpeakingWave />
-                </div>
-              </motion.div>
-            )}
-          </AnimatePresence>
-
-          {/* Processing indicator in chat stream */}
-          <AnimatePresence>
-            {isProcessing && (
-              <motion.div
-                key="processing"
-                className="flex gap-2.5"
-                initial={{ opacity: 0, y: 10 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0 }}
-                transition={{ duration: 0.2 }}
-              >
-                <div className="size-7 rounded-full bg-foreground/10 border border-border shrink-0 flex items-center justify-center">
-                  <motion.span
-                    className="size-3.5 rounded-full border-[1.5px] border-muted-foreground/30 border-t-muted-foreground"
-                    animate={{ rotate: 360 }}
-                    transition={{ duration: 0.8, repeat: Infinity, ease: "linear" }}
-                  />
-                </div>
-                <div className="bg-muted/50 rounded-2xl rounded-tl-sm px-4 py-3 flex items-center">
-                  <span className="text-sm text-muted-foreground">Thinking…</span>
-                </div>
-              </motion.div>
-            )}
-          </AnimatePresence>
-        </div>
-
-        {/* ── Bottom controls ── */}
-        <div className="flex flex-col gap-3">
-
-          {/* Live caption box */}
-          <AnimatePresence>
-            {isListening && (
-              <motion.div
-                key="caption"
-                initial={{ opacity: 0, y: 10, scale: 0.98 }}
-                animate={{ opacity: 1, y: 0, scale: 1 }}
-                exit={{ opacity: 0, y: 6, scale: 0.98 }}
-                transition={{ type: "spring", stiffness: 400, damping: 34 }}
-                className="rounded-2xl border border-border bg-muted/30 px-4 py-3 min-h-14 flex items-start gap-2.5"
-              >
-                {/* Animated mic dot */}
-                <motion.span
-                  className="size-1.5 rounded-full bg-primary mt-1.5 shrink-0"
-                  animate={{ opacity: [1, 0.3, 1] }}
-                  transition={{ duration: 1.2, repeat: Infinity, ease: "easeInOut" }}
-                />
-                <LiveCaptionText text={liveCaption} />
-              </motion.div>
-            )}
-          </AnimatePresence>
-
-          {/* Done button with ripple */}
-          <AnimatePresence>
-            {isListening && (
-              <motion.div
-                key="done-btn"
-                className="flex flex-col items-center gap-2"
-                initial={{ opacity: 0, y: 12 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: 8 }}
-                transition={{ type: "spring", stiffness: 380, damping: 30, delay: 0.05 }}
-              >
-                <div className="relative">
-                  <MicRipple />
-                  <Button
-                    onClick={handleDone}
-                    className="relative h-11 px-8 rounded-full text-sm font-medium"
-                  >
-                    Done
-                  </Button>
-                </div>
-                <motion.p
-                  className="text-xs text-muted-foreground"
-                  initial={{ opacity: 0 }}
-                  animate={{ opacity: 1 }}
-                  transition={{ delay: 0.3 }}
+          {/* Call stage — tiles are drag-reorderable, Meet/Teams-style */}
+          <div className="relative flex-1 min-h-0 flex flex-col sm:flex-row gap-4">
+            <Reorder.Group
+              as="div"
+              axis="x"
+              values={tileOrder}
+              onReorder={setTileOrder}
+              className="flex-1 min-h-0 flex flex-col sm:flex-row gap-4"
+            >
+              {tileOrder.map((id) => (
+                <Reorder.Item
+                  as="div"
+                  key={id}
+                  value={id}
+                  whileDrag={{ scale: 1.02, zIndex: 20 }}
+                  className="flex-1 min-h-0 flex cursor-grab active:cursor-grabbing"
                 >
-                  We'll auto-submit when you stop speaking — or click when you're done
-                </motion.p>
-              </motion.div>
-            )}
-          </AnimatePresence>
+                  {id === "ai" ? (
+                    <AiPresenceTile phase={phase} />
+                  ) : (
+                    <CameraTile videoRef={videoRef} hasVideo={hasVideo} />
+                  )}
+                </Reorder.Item>
+              ))}
+            </Reorder.Group>
 
-          {/* Done screen */}
-          <AnimatePresence>
-            {phase === "done" && (
-              <motion.div
-                key="done-screen"
-                initial={{ opacity: 0, scale: 0.95, y: 12 }}
-                animate={{ opacity: 1, scale: 1, y: 0 }}
-                transition={{ type: "spring", stiffness: 300, damping: 28 }}
-                className="rounded-2xl border border-border bg-card card-shadow p-8 text-center flex flex-col items-center gap-4"
-              >
+            {/* Floating Done control, overlaying the bottom of the stage */}
+            <AnimatePresence>
+              {isListening && (
                 <motion.div
-                  className="size-12 rounded-full bg-muted flex items-center justify-center"
-                  initial={{ scale: 0, rotate: -30 }}
-                  animate={{ scale: 1, rotate: 0 }}
-                  transition={{ type: "spring", stiffness: 400, damping: 22, delay: 0.1 }}
-                >
-                  <svg viewBox="0 0 20 20" fill="currentColor" className="size-5 text-foreground">
-                    <path fillRule="evenodd" d="M16.704 4.153a.75.75 0 0 1 .143 1.052l-8 10.5a.75.75 0 0 1-1.127.075l-4.5-4.5a.75.75 0 0 1 1.06-1.06l3.894 3.893 7.48-9.817a.75.75 0 0 1 1.05-.143Z" clipRule="evenodd" />
-                  </svg>
-                </motion.div>
-                <motion.div
-                  initial={{ opacity: 0, y: 6 }}
+                  key="done-floating"
+                  className="absolute inset-x-0 bottom-5 flex justify-center pointer-events-none px-4"
+                  initial={{ opacity: 0, y: 12 }}
                   animate={{ opacity: 1, y: 0 }}
-                  transition={{ delay: 0.2 }}
+                  exit={{ opacity: 0, y: 8 }}
+                  transition={{ type: "spring", stiffness: 380, damping: 30, delay: 0.05 }}
                 >
-                  <p className="text-base font-semibold text-foreground">Interview complete</p>
-                  <p className="text-sm text-muted-foreground mt-1">You answered all the questions. Great practice!</p>
+                  <div className="pointer-events-auto flex items-center gap-3 pl-4 pr-2 py-2 rounded-full bg-card/95 backdrop-blur-md border border-border card-shadow-hover">
+                    <span className="text-xs text-muted-foreground">Auto-submits when you stop talking</span>
+                    <DoneButton onDone={handleDone} />
+                  </div>
                 </motion.div>
-                <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.35 }}>
-                  <Button
-                    onClick={() => navigate("/")}
-                    className="h-9 px-6 rounded-full text-sm"
-                  >
-                    Back to roles
-                  </Button>
+              )}
+            </AnimatePresence>
+          </div>
+
+          {/* Transcript sidebar */}
+          <aside className="w-full lg:w-95 shrink-0 flex flex-col gap-4 min-h-0">
+            <div
+              ref={scrollRef}
+              className="flex-1 min-h-0 overflow-y-auto flex flex-col gap-3 pb-1 scrollbar-none chat-fade-mask rounded-2xl border border-border bg-card p-4"
+            >
+              <TranscriptMessages messages={messages} isAsking={isAsking} isProcessing={isProcessing} />
+            </div>
+
+            <AnimatePresence>
+              {isListening && (
+                <motion.div
+                  key="caption"
+                  initial={{ opacity: 0, y: 10, scale: 0.98 }}
+                  animate={{ opacity: 1, y: 0, scale: 1 }}
+                  exit={{ opacity: 0, y: 6, scale: 0.98 }}
+                  transition={{ type: "spring", stiffness: 400, damping: 34 }}
+                  className="shrink-0 rounded-2xl border border-border bg-muted/30 px-4 py-3 min-h-14 flex items-start gap-2.5"
+                >
+                  <motion.span
+                    className="size-1.5 rounded-full bg-primary mt-1.5 shrink-0"
+                    animate={{ opacity: [1, 0.3, 1] }}
+                    transition={{ duration: 1.2, repeat: Infinity, ease: "easeInOut" }}
+                  />
+                  <LiveCaptionText text={liveCaption} />
                 </motion.div>
-              </motion.div>
-            )}
-          </AnimatePresence>
+              )}
+            </AnimatePresence>
+
+            <AnimatePresence>{phase === "done" && doneScreen}</AnimatePresence>
+          </aside>
         </div>
-      </div>
+      ) : (
+        /* ══ Chat layout: original centered single-column transcript ══ */
+        <div className="flex-1 min-h-0 max-w-3xl w-full mx-auto px-6 py-6 flex flex-col gap-4">
+          <div
+            ref={scrollRef}
+            className="flex-1 min-h-0 overflow-y-auto flex flex-col gap-3 pb-1 scrollbar-none chat-fade-mask"
+          >
+            <TranscriptMessages messages={messages} isAsking={isAsking} isProcessing={isProcessing} />
+          </div>
+
+          <div className="flex flex-col gap-3 shrink-0">
+            <AnimatePresence>
+              {isListening && (
+                <motion.div
+                  key="caption"
+                  initial={{ opacity: 0, y: 10, scale: 0.98 }}
+                  animate={{ opacity: 1, y: 0, scale: 1 }}
+                  exit={{ opacity: 0, y: 6, scale: 0.98 }}
+                  transition={{ type: "spring", stiffness: 400, damping: 34 }}
+                  className="rounded-2xl border border-border bg-muted/30 px-4 py-3 min-h-14 flex items-center gap-3"
+                >
+                  <motion.span
+                    className="size-1.5 rounded-full bg-primary mt-0.5 shrink-0"
+                    animate={{ opacity: [1, 0.3, 1] }}
+                    transition={{ duration: 1.2, repeat: Infinity, ease: "easeInOut" }}
+                  />
+                  <div className="flex-1 min-w-0">
+                    <LiveCaptionText text={liveCaption} />
+                  </div>
+                  <span className="text-[11px] text-muted-foreground shrink-0 hidden sm:inline">
+                    Auto-submits when done
+                  </span>
+                  <DoneButton onDone={handleDone} size={38} />
+                </motion.div>
+              )}
+            </AnimatePresence>
+
+            <AnimatePresence>{phase === "done" && doneScreen}</AnimatePresence>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

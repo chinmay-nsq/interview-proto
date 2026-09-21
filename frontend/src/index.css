@@ -3,6 +3,10 @@
 @import "shadcn/tailwind.css";
 @import "@fontsource-variable/inter";
 
+/* No dark theme in this app — pin `dark:` to an explicit .dark ancestor class
+   (which is never applied anywhere) instead of Tailwind's default
+   prefers-color-scheme media query, so OS-level dark mode can't leak through
+   any component's scattered `dark:` utility classes (e.g. shadcn internals). */
 @custom-variant dark (&:is(.dark *));
 
 @theme inline {
@@ -48,83 +52,44 @@
     --radius-4xl: calc(var(--radius) * 2.6);
 }
 
-/* ── Light mode (default) — sleek premium, indigo-violet signature accent ── */
+/* ── Light mode (default) — sleek premium, amber signature accent ────────── */
 :root {
-    --background: oklch(0.985 0.004 275);
-    --foreground: oklch(0.16 0.012 275);
+    --background: oklch(0.985 0.006 65);
+    --foreground: oklch(0.16 0.012 55);
     --card: oklch(1 0 0);
-    --card-foreground: oklch(0.16 0.012 275);
+    --card-foreground: oklch(0.16 0.012 55);
     --popover: oklch(1 0 0);
-    --popover-foreground: oklch(0.16 0.012 275);
-    --primary: oklch(0.46 0.19 283);
-    --primary-foreground: oklch(0.99 0.006 283);
-    --secondary: oklch(0.955 0.008 275);
-    --secondary-foreground: oklch(0.24 0.02 275);
-    --muted: oklch(0.955 0.008 275);
-    --muted-foreground: oklch(0.52 0.014 275);
-    --accent: oklch(0.94 0.03 283);
-    --accent-foreground: oklch(0.3 0.09 283);
+    --popover-foreground: oklch(0.16 0.012 55);
+    --primary: oklch(0.52 0.18 55);
+    --primary-foreground: oklch(0.99 0.01 55);
+    --secondary: oklch(0.955 0.01 60);
+    --secondary-foreground: oklch(0.24 0.02 55);
+    --muted: oklch(0.955 0.01 60);
+    --muted-foreground: oklch(0.52 0.016 55);
+    --accent: oklch(0.94 0.035 60);
+    --accent-foreground: oklch(0.32 0.1 50);
     --destructive: oklch(0.577 0.245 27.325);
-    --border: oklch(0.9 0.007 275);
-    --input: oklch(0.9 0.007 275);
-    --ring: oklch(0.5 0.15 283 / 35%);
+    --border: oklch(0.9 0.009 60);
+    --input: oklch(0.9 0.009 60);
+    --ring: oklch(0.55 0.16 55 / 35%);
     --chart-1: oklch(0.55 0.18 264);
     --chart-2: oklch(0.6 0.14 195);
     --chart-3: oklch(0.5 0.16 320);
     --chart-4: oklch(0.65 0.18 95);
     --chart-5: oklch(0.6 0.2 25);
     --radius: 0.75rem;
-    --sidebar: oklch(0.97 0.005 275);
-    --sidebar-foreground: oklch(0.16 0.012 275);
-    --sidebar-primary: oklch(0.46 0.19 283);
-    --sidebar-primary-foreground: oklch(0.99 0.006 283);
-    --sidebar-accent: oklch(0.94 0.03 283);
-    --sidebar-accent-foreground: oklch(0.3 0.09 283);
-    --sidebar-border: oklch(0.9 0.007 275);
-    --sidebar-ring: oklch(0.5 0.15 283 / 35%);
+    --sidebar: oklch(0.97 0.008 60);
+    --sidebar-foreground: oklch(0.16 0.012 55);
+    --sidebar-primary: oklch(0.52 0.18 55);
+    --sidebar-primary-foreground: oklch(0.99 0.01 55);
+    --sidebar-accent: oklch(0.94 0.035 60);
+    --sidebar-accent-foreground: oklch(0.32 0.1 50);
+    --sidebar-border: oklch(0.9 0.009 60);
+    --sidebar-ring: oklch(0.55 0.16 55 / 35%);
 
     /* signature gradient pair for the brand mark / accent glows */
-    --gradient-from: oklch(0.5 0.2 292);
-    --gradient-to: oklch(0.58 0.16 250);
-}
-
-/* ── Dark mode — deep neutral charcoal ─────────────────────────────────── */
-.dark {
-    --background: oklch(0.11 0 0);
-    --foreground: oklch(0.96 0 0);
-    --card: oklch(0.15 0 0);
-    --card-foreground: oklch(0.96 0 0);
-    --popover: oklch(0.15 0 0);
-    --popover-foreground: oklch(0.96 0 0);
-    --primary: oklch(0.96 0 0);
-    --primary-foreground: oklch(0.11 0 0);
-    --secondary: oklch(0.22 0 0);
-    --secondary-foreground: oklch(0.96 0 0);
-    --muted: oklch(0.22 0 0);
-    --muted-foreground: oklch(0.6 0 0);
-    --accent: oklch(0.22 0 0);
-    --accent-foreground: oklch(0.96 0 0);
-    --destructive: oklch(0.65 0.23 25);
-    --border: oklch(1 0 0 / 10%);
-    --input: oklch(1 0 0 / 10%);
-    --ring: oklch(0.7 0 0 / 30%);
-    --chart-1: oklch(0.6 0.18 264);
-    --chart-2: oklch(0.65 0.14 195);
-    --chart-3: oklch(0.62 0.16 320);
-    --chart-4: oklch(0.7 0.18 95);
-    --chart-5: oklch(0.65 0.2 25);
-    --sidebar: oklch(0.13 0 0);
-    --sidebar-foreground: oklch(0.96 0 0);
-    --sidebar-primary: oklch(0.96 0 0);
-    --sidebar-primary-foreground: oklch(0.11 0 0);
-    --sidebar-accent: oklch(0.22 0 0);
-    --sidebar-accent-foreground: oklch(0.96 0 0);
-    --sidebar-border: oklch(1 0 0 / 10%);
-    --sidebar-ring: oklch(0.7 0 0 / 30%);
-
-    --apple-blue: oklch(0.65 0.2 264);
-    --apple-blue-subtle: oklch(0.65 0.2 264 / 12%);
-    --apple-blue-border: oklch(0.65 0.2 264 / 25%);
+    --gradient-from: oklch(0.55 0.19 45);
+    --gradient-to: oklch(0.62 0.16 75);
 }
 
 @layer base {
@@ -161,7 +126,7 @@
     height: 420px;
     background: radial-gradient(
       ellipse 60% 100% at 20% 0%,
-      oklch(0.5 0.2 292 / 10%),
+      oklch(0.55 0.18 55 / 10%),
       transparent 70%
     );
     pointer-events: none;
@@ -174,21 +139,11 @@
       0 1px 2px oklch(0 0 0 / 4%),
       0 4px 16px oklch(0 0 0 / 6%);
   }
-  .dark .card-shadow {
-    box-shadow:
-      0 1px 2px oklch(0 0 0 / 20%),
-      0 4px 16px oklch(0 0 0 / 30%);
-  }
 
   .card-shadow-hover {
     box-shadow:
       0 1px 2px oklch(0 0 0 / 5%),
       0 8px 32px oklch(0 0 0 / 10%);
-  }
-  .dark .card-shadow-hover {
-    box-shadow:
-      0 1px 2px oklch(0 0 0 / 30%),
-      0 8px 32px oklch(0 0 0 / 40%);
   }
 
   /* Hidden scrollbar — scrollable but invisible */
@@ -211,14 +166,6 @@
   0%   { box-shadow: 0 0 0 0 oklch(0.18 0 0 / 20%); }
   70%  { box-shadow: 0 0 0 14px oklch(0.18 0 0 / 0%); }
   100% { box-shadow: 0 0 0 0 oklch(0.18 0 0 / 0%); }
-}
-.dark .animate-mic-pulse {
-  animation: mic-pulse-dark 1.8s ease-out infinite;
-}
-@keyframes mic-pulse-dark {
-  0%   { box-shadow: 0 0 0 0 oklch(0.96 0 0 / 20%); }
-  70%  { box-shadow: 0 0 0 14px oklch(0.96 0 0 / 0%); }
-  100% { box-shadow: 0 0 0 0 oklch(0.96 0 0 / 0%); }
 }
 
 .animate-mic-pulse {
