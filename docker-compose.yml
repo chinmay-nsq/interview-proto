@@ -1,0 +1,28 @@
+services:
+  emqx:
+    image: emqx/emqx:5.8.0
+    container_name: interview-emqx
+    restart: unless-stopped
+    ports:
+      - "1883:1883"    # MQTT TCP — backend Node client
+      - "8083:8083"    # MQTT over WebSocket — browser mqtt.js client
+      - "18083:18083"  # Dashboard (http://localhost:18083)
+    environment:
+      - EMQX_ALLOW_ANONYMOUS=true
+    volumes:
+      - emqx-data:/opt/emqx/data
+      - emqx-log:/opt/emqx/log
+
+  redis:
+    image: redis:7-alpine
+    container_name: interview-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+
+volumes:
+  emqx-data:
+  emqx-log:
+  redis-data:
